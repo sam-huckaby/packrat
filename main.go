@@ -34,6 +34,10 @@ type stashDeletedMsg struct {
 	ref string
 	err error
 }
+type stashAppliedMsg struct {
+	ref string
+	err error
+}
 
 // ---------------------------------------------------------------------------
 // Model
@@ -121,6 +125,14 @@ func dropStash(ref string) tea.Cmd {
 	}
 }
 
+func applyStash(ref string) tea.Cmd {
+	return func() tea.Msg {
+		cmd := exec.Command("git", "stash", "apply", ref)
+		err := cmd.Run()
+		return stashAppliedMsg{ref: ref, err: err}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Update (the game loop)
 // ---------------------------------------------------------------------------
@@ -131,11 +143,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		//listWidth := 50
-		//m.stashList.SetSize(listWidth, m.height-2)
+		listWidth := 75
 		m.stashList.SetHeight(m.height - 2)
-		m.stashList.SetWidth(m.width)
-		m.viewport.Width = m.width - 52 - 4
+		m.stashList.SetWidth(listWidth)
+		m.viewport.Width = m.width - (listWidth + 2) - 4
 		m.viewport.Height = m.height - 4
 
 	case tea.KeyMsg:
@@ -167,6 +178,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selectedRef = sel.Ref
 					m.confirmMode = true
 				}
+			case "a":
+				if sel, ok := m.stashList.SelectedItem().(Stash); ok {
+					m.loading = true
+					return m, applyStash(sel.Ref)
+				}
 			}
 		}
 
@@ -193,6 +209,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.viewport.SetContent("(no stashes)")
 			}
 		}
+
+	case stashAppliedMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.err = msg.err
+		} else {
+			m.viewport.SetContent("Stash applied!")
+			m.viewport.GotoTop()
+		}
+
 	}
 
 	// Scroll diff viewport if active
@@ -226,7 +252,7 @@ func (m model) View() string {
 	}
 
 	leftPane := borderStyle.Render(m.stashList.View())
-	header := titleStyle.Render("[Enter] Show stash  [d] Drop stash  [q] Quit  [↑/↓] Scroll diff")
+	header := titleStyle.Render("[Enter] Show stash  [a] Apply stash  [d] Drop stash  [q] Quit  [↑/↓] Scroll diff")
 
 	right := m.viewport.View()
 	rightPane := borderStyle.Render(header + "\n\n" + right)
