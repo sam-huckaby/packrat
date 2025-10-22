@@ -1,4 +1,4 @@
-module sam-huckaby/packrat
+module github.com/sam-huckaby/packrat
 
 go 1.24.4
 
