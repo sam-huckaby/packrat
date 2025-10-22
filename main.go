@@ -200,13 +200,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.err = msg.err
 		} else {
-			idx := m.stashList.Index()
-			m.stashList.RemoveItem(idx)
+			// Re-fetch the list of stashes so that the indexes aren't messed up
+			stashes, err := listStashes()
+			items := make([]list.Item, len(stashes))
+			for i, s := range stashes {
+				items[i] = s
+			}
+			m.stashList.SetItems(items)
+
 			if len(m.stashList.Items()) > 0 {
 				ref := m.stashList.SelectedItem().(Stash).Ref
 				cmds = append(cmds, getStashDiff(ref))
 			} else {
 				m.viewport.SetContent("(no stashes)")
+			}
+
+			if err != nil {
+				m.viewport.SetContent(fmt.Sprintf("Error reloading stashes: %v", err))
 			}
 		}
 
