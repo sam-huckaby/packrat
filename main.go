@@ -35,9 +35,42 @@ type stashDeletedMsg struct {
 	err error
 }
 type stashAppliedMsg struct {
-	ref string
-	err error
+	ref    string
+	output string
+	err    error
 }
+
+// ---------------------------------------------------------------------------
+// States
+// ---------------------------------------------------------------------------
+
+type AppState int
+
+const (
+	StateExplore AppState = iota
+	StateDelete
+	StateInspect
+	StateCleanUp
+)
+
+var stateName = map[AppState]string{
+	StateExplore: "explore",
+	StateDelete:  "delete",
+	StateInspect: "inspect",
+	StateCleanUp: "cleanup",
+}
+
+// ---------------------------------------------------------------------------
+// Modal Types
+// ---------------------------------------------------------------------------
+
+type ModalType int
+
+const (
+	ModalNone ModalType = iota
+	ModalDeleteConfirm
+	ModalApplyConfirm
+)
 
 // ---------------------------------------------------------------------------
 // Model
@@ -50,7 +83,8 @@ type model struct {
 	diff        string
 	loading     bool
 	err         error
-	confirmMode bool
+	activeModal ModalType // The type of modal currently displayed (ModalNone if no modal)
+	appState    AppState  // The state of the app at any given moment
 	selectedRef string
 }
 
@@ -69,6 +103,7 @@ func initialModel() model {
 	return model{
 		stashList: l,
 		viewport:  vp,
+		appState:  StateExplore,
 		err:       err,
 	}
 }
@@ -128,8 +163,8 @@ func dropStash(ref string) tea.Cmd {
 func applyStash(ref string) tea.Cmd {
 	return func() tea.Msg {
 		cmd := exec.Command("git", "stash", "apply", ref)
-		err := cmd.Run()
-		return stashAppliedMsg{ref: ref, err: err}
+		out, err := cmd.CombinedOutput()
+		return stashAppliedMsg{ref: ref, output: string(out), err: err}
 	}
 }
 
@@ -143,28 +178,62 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		listWidth := 75
-		m.stashList.SetHeight(m.height - 2)
-		m.stashList.SetWidth(listWidth)
-		m.viewport.Width = m.width - (listWidth + 2) - 4
-		m.viewport.Height = m.height - 4
+
+		// Calculate dimensions accounting for borders and padding
+		// borderStyle adds: 2 for border (left+right or top+bottom) + 2 for padding = 4 total per dimension
+		const borderChrome = 4
+
+		// Left pane (list) takes up about 75 columns
+		listPaneWidth := 75
+		listContentWidth := listPaneWidth - borderChrome
+
+		// Right pane (viewport) takes the remaining width
+		rightPaneWidth := m.width - listPaneWidth
+		viewportContentWidth := rightPaneWidth - borderChrome
+
+		// Height calculations - both panes should have the same total height
+		// Content inside the border should be: m.height - borderChrome
+		totalContentHeight := m.height - borderChrome
+
+		// For the viewport, we need to account for the header (1 line) + spacing (2 lines) = 3 lines
+		const headerAndSpacing = 2
+		viewportHeight := totalContentHeight - headerAndSpacing
+		if viewportHeight < 0 {
+			viewportHeight = 0
+		}
+
+		// Set the actual component sizes (these are the content sizes, borders will be added in View)
+		m.stashList.SetWidth(listContentWidth)
+		m.stashList.SetHeight(totalContentHeight)
+		m.viewport.Width = viewportContentWidth
+		m.viewport.Height = viewportHeight
 
 	case tea.KeyMsg:
 		switch {
 		case msg.String() == "ctrl+c" || msg.String() == "q":
-			if m.confirmMode {
-				m.confirmMode = false
+			if m.activeModal != ModalNone {
+				m.activeModal = ModalNone
 			} else {
 				return m, tea.Quit
 			}
-		case m.confirmMode:
+		case m.activeModal == ModalDeleteConfirm:
 			switch msg.String() {
 			case "y", "Y":
-				m.confirmMode = false
+				m.activeModal = ModalNone
 				ref := m.selectedRef
 				return m, dropStash(ref)
 			case "n", "N", "esc":
-				m.confirmMode = false
+				m.activeModal = ModalNone
+			}
+		case m.activeModal == ModalApplyConfirm:
+			switch msg.String() {
+			case "y", "Y":
+				m.activeModal = ModalNone
+				m.loading = true
+				ref := m.selectedRef
+				return m, applyStash(ref)
+			case "n", "N", "esc":
+				m.activeModal = ModalNone
 			}
 		default:
 			switch msg.String() {
@@ -176,12 +245,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "d": // Delete a stash
 				if sel, ok := m.stashList.SelectedItem().(Stash); ok {
 					m.selectedRef = sel.Ref
-					m.confirmMode = true
+					m.activeModal = ModalDeleteConfirm
 				}
 			case "a": // Apply a stash
 				if sel, ok := m.stashList.SelectedItem().(Stash); ok {
-					m.loading = true
-					return m, applyStash(sel.Ref)
+					m.selectedRef = sel.Ref
+					m.activeModal = ModalApplyConfirm
 				}
 			}
 		}
@@ -223,16 +292,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case stashAppliedMsg:
 		m.loading = false
 		if msg.err != nil {
-			m.err = msg.err
+			m.viewport.SetContent(fmt.Sprintf("Error applying stash:\n\n%s", msg.output))
 		} else {
-			m.viewport.SetContent("Stash applied!")
-			m.viewport.GotoTop()
+			m.viewport.SetContent(fmt.Sprintf("Stash applied successfully!\n\n%s", msg.output))
 		}
+		m.viewport.GotoTop()
 
 	}
 
 	// Scroll diff viewport if active
-	if !m.confirmMode {
+	if m.activeModal == ModalNone {
 		m.viewport, cmd = m.viewport.Update(msg)
 		cmds = append(cmds, cmd)
 
@@ -256,24 +325,40 @@ var (
 			Background(lipgloss.Color("52"))
 )
 
+func (m model) renderModal() string {
+	switch m.activeModal {
+	case ModalDeleteConfirm:
+		return modalStyle.Render(fmt.Sprintf("Delete %s?\n\n[y] Yes   [n] No", m.selectedRef))
+	case ModalApplyConfirm:
+		return modalStyle.Render(fmt.Sprintf("Apply %s?\n\n[y] Yes   [n] No", m.selectedRef))
+	default:
+		return ""
+	}
+}
+
 func (m model) View() string {
 	if m.err != nil {
 		return fmt.Sprintf("Error: %v\n", m.err)
 	}
 
-	leftPane := borderStyle.Render(m.stashList.View())
-	header := titleStyle.Render("[Enter] Show stash  [a] Apply stash  [d] Drop stash  [q] Quit  [↑/↓] Scroll diff")
-
-	right := m.viewport.View()
-	rightPane := borderStyle.Render(header + "\n\n" + right)
-	view := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
-
-	if m.confirmMode {
-		modal := modalStyle.Render(fmt.Sprintf("Delete %s?\n\n[y] Yes   [n] No", m.selectedRef))
+	if m.activeModal != ModalNone {
+		modal := m.renderModal()
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal)
 	}
 
-	return view
+	// Render left pane with border
+	leftPane := borderStyle.Render(m.stashList.View())
+
+	// Render header and viewport for right pane
+	header := titleStyle.Render("[Enter] Show stash  [a] Apply stash  [d] Drop stash  [q] Quit  [↑/↓] Scroll diff")
+	viewportContent := m.viewport.View()
+
+	// Combine header and viewport, then wrap in border
+	rightContent := header + "\n\n" + viewportContent
+	rightPane := borderStyle.Render(rightContent)
+
+	// Join panes side by side - they should naturally be the same height since we sized them equally
+	return lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
 }
 
 // ---------------------------------------------------------------------------
