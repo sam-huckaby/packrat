@@ -11,3 +11,19 @@ This is a simple tool built in Go, a language I am working on becoming more comf
 1. Clone the repo
 1. run `go build`
 1. run `go install`
+
+**Note**: You may need to add your Go bin directory to your $PATH. You can do this by running the following command:
+
+```
+go list -f '{{.Target}}'
+```
+
+And then removing "packrat" from the end, and using that path to update your .bashrc/.zshrc/etc with a line that looks like this:
+
+```
+export PATH=$PATH:/path/to/your/bin/directory
+```
+
+### Screenshot
+
+![Packrat in action](docs/screenshot.png)
