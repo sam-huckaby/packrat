@@ -168,17 +168,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		default:
 			switch msg.String() {
-			case "enter":
+			case "enter": // View a stash's contents
 				if sel, ok := m.stashList.SelectedItem().(Stash); ok {
 					m.loading = true
 					return m, getStashDiff(sel.Ref)
 				}
-			case "d":
+			case "d": // Delete a stash
 				if sel, ok := m.stashList.SelectedItem().(Stash); ok {
 					m.selectedRef = sel.Ref
 					m.confirmMode = true
 				}
-			case "a":
+			case "a": // Apply a stash
 				if sel, ok := m.stashList.SelectedItem().(Stash); ok {
 					m.loading = true
 					return m, applyStash(sel.Ref)
