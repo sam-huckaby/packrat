@@ -761,7 +761,7 @@ func (m model) View() string {
 		leftPane := borderStyle.Render(m.fileList.View())
 
 		selectedCount := len(m.selectedFiles)
-		helpText := fmt.Sprintf("[Enter] Select  [Space] Expand/Collapse  [s] Save (%d)  [r] Restore  [Tab] Explore  [q] Quit", selectedCount)
+		helpText := fmt.Sprintf("[Enter] Select  [Space] Expand/Collapse  [s] Save (%d)  [r] Restore  [Tab] Explore Mode  [q] Quit", selectedCount)
 		header := titleStyle.Render(helpText)
 		viewportContent := m.buildViewport.View()
 
